@@ -18,7 +18,14 @@ class Command:
     def from_bytes(bytes):
         raise NotImplementedError
 
-    def run(self):
+    def run(self, result_queue):
+        """Runs the command.
+        
+        Positional arguments:
+        result_queue - A queue to which Result objects for this command will be pushed.
+                       Actual commands may continue to run indefinitely and push results
+                       and should document this.
+        """
         raise NotImplementedError
 
 class ShellCommand(Command):
@@ -36,13 +43,13 @@ class ShellCommand(Command):
         def to_bytes(self):
             buf = bytearray()
             buf.append(self.type)
-            buf.extend(struct.pack(">i", self.retcode))
+            buf.extend(struct.pack("<i", self.retcode))
 
-            buf.extend(struct.pack(">H", len(self.stdout)))
+            buf.extend(struct.pack("<H", len(self.stdout)))
             if self.stdout:
                 buf.extend(self.stdout)
 
-            buf.extend(struct.pack(">H", len(self.stderr)))
+            buf.extend(struct.pack("<H", len(self.stderr)))
             if self.stderr:
                 buf.extend(self.stderr)
 
@@ -50,12 +57,12 @@ class ShellCommand(Command):
 
         @staticmethod
         def from_bytes(buf):
-            retcode = struct.unpack(">i", buf[1:5])[0]
+            retcode = struct.unpack("<i", buf[1:5])[0]
 
-            outlen = struct.unpack(">H", buf[5:7])[0]
+            outlen = struct.unpack("<H", buf[5:7])[0]
             out = str(buf[7:7+outlen]) if outlen else None
 
-            errlen = struct.unpack(">H", buf[7+outlen:7+outlen+2])[0]
+            errlen = struct.unpack("<H", buf[7+outlen:7+outlen+2])[0]
             err = str(buf[7+outlen:]) if errlen else None
 
             return ShellCommand.Result(retcode, out, err)
@@ -87,32 +94,41 @@ class ShellCommand(Command):
         command = str(buf[2:2+cmdlen])
         return ShellCommand(command)
 
-    def run(self):
+    def run(self, result_queue):
         p = subprocess.Popen(self.command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, shell=True)
         out, err = p.communicate()
-        return ShellCommand.Result(p.returncode, out, err)
+        result = ShellCommand.Result(p.returncode, out, err)
+        result_queue.push(result)
 
 
 class WatchCommand(Command):
+    DIR  = 0
+    FILE = 1
 
     class Result:
-        def __init__(self, contents, err):
+        def __init__(self, path, contents, err):
             self.type = Command.WATCH
+            self.path = path
             self.contents = contents if contents else ""
-
-            if err and len(err) > 255:
-                self.err = err[:256]
-            else:
-                self.err = err
+            self.err = err
 
         def __str__(self):
-            return self.contents
+            result = "Path: {}\n".format(self.path)
+            if self.err:
+                result += "Error: {}".format(self.err)
+            else:
+                result += "Contents: {}".format(self.contents)
 
         def to_bytes(self):
             buf = bytearray()
             buf.append(self.type)
 
-            buf.extend(struct.pack(">I", len(self.contents) if self.contents else 0))
+            # Add the full path of the file whose contents or error are stored
+            # in this result
+            buf.append(struct.pack("<H", len(self.path))
+            buf.extend(self.path)
+
+            buf.extend(struct.pack("<I", len(self.contents) if self.contents else 0))
             if self.contents:
                 buf.extend(self.contents)
 
@@ -124,8 +140,17 @@ class WatchCommand(Command):
 
         @staticmethod
         def from_bytes(buf):
-            contentlen = struct.unpack(">I", buf[1:5])[0]
-            contents = bytes(buf[5:5+contentlen]) if contentlen else None
+            offset = 1
+
+            pathlen = struct.unpack("<H", buf[offset:offset+2])[0]
+            offset += 2
+            path = str(buf[offset:offset+pathlen])
+            offset += pathlen
+
+            contentlen = struct.unpack("<I", buf[offset:offset+4])[0]
+            offset += 4
+            contents = bytes(buf[offset:offset+contentlen]) if contentlen else None
+            offset += contentlen
 
             # bytearrays store ints, "bytes" is an alias for str
             errlenbyte = buf[5+contentlen]
@@ -134,34 +159,52 @@ class WatchCommand(Command):
             else:
                 errlen = ord(errlenbyte)
 
-            err = str(buf[5+contentlen:]) if errlen else None
+            err = str(buf[offset:]) if errlen else None
 
-            return WatchCommand.Result(contents, err)
+            return WatchCommand.Result(path, contents, err)
 
-    # path is the path to the file for the creation of which to watch
-    def __init__(self, path):
+    def __init__(self, path, path_type):
+        """Creates a watch command, which watches a directory or file for changes and reports changed files' contents.
+
+        Positional arguments:
+        path      - The path to watch. If this is a directory, it must already
+                    exist. If it is a file, its enclosing directory must exist.
+                    Length must be <= 1024 bytes.
+        path_type - The type of path; must be one of WatchCommand.DIR or
+                    WatchCommand.FILE.
+        """
+
+        assert(path_type == WatchCommand.DIR || path_type == WatchCommand.FILE)
+
         self.type = Command.WATCH
         self.path = path
+        self.path_type = path_type
 
     def __str__(self):
-        return "Command type: WATCH; path to watch: {}".format(self.path)
+        return "Command type: WATCH; path to watch: {}; path type: {}".format(self.path, "directory" if self.path_type == WatchCommand.DIR else "file")
 
     def to_bytes(self):
         buf = bytearray()
         buf.append(self.type)
-        buf.append(len(self.path))
+        buf.extend(struct.pack("<H", len(self.path)))
         buf.extend(self.path)
+        buf.append(self.path_type)
         return bytes(buf)
 
     @staticmethod
     def from_bytes(buf):
-        pathlen = buf[1] if isinstance(pathlen, int) else ord(buf[1])
-        path = str(buf[2:2+pathlen])
-        return WatchCommand(path)
+        pathlen = struct.unpack("<H", buf[1:3])[0]
+        path = str(buf[3:3+pathlen])
+        path_type = ord(buf[3+pathlen])
+        return WatchCommand(path, path_type)
 
-    def run(self):
-        watchdir, watchfile = os.path.split(self.path)
-        if not os.path.exists(watchdir):
+    def run(self, result_queue):
+        if self.path_type == WatchCommand.FILE:
+            watchdir, watchfile = os.path.split(self.path)
+        else:
+            watchdir = self.path
+
+        if not os.path.isdir(watchdir):
             err = "No such directory {}".format(watchdir)
             return WatchCommand.Result(None, err)
 
@@ -171,22 +214,25 @@ class WatchCommand(Command):
             for event in i.event_gen():
                 if event:
                     (header, type_names, watch_path, filename) = event
-                    if filename == watchfile:
-                        break
+                    if self.path_type == WatchCommand.FILE and filename != watchfile:
+                        continue
 
-            with open(self.path, 'r') as payload:
-                contents = payload.read()
-                result = WatchCommand.Result(contents, None)
+                    fullpath = os.path.join(watchdir, filename)
+                    print("{} was modified. New contents will be sent to client.".format(fullpath))
+
+                    with open(watch_path, 'r') as payload:
+                        contents = payload.read()
+                        result = WatchCommand.Result(fullpath, contents, None)
+                        result_queue.push(result)
 
         except Exception, err:
-            print("Error while watching file:")
+            print("Error while watching {}:".format("file" if self.path_type == WatchCommand.FILE else "directory"))
             print(err)
             print("This error will be transmitted to the client.")
-            result = WatchCommand.Result(None, str(err))
+            result = WatchCommand.Result(self.path, None, str(err))
+            result_queue.push(result)
         finally:
             i.remove_watch(self.path)
-
-        return result
 
 class EndCommand(Command):
 
@@ -203,5 +249,5 @@ class EndCommand(Command):
     def from_bytes(buf):
         return EndCommand()
 
-    def run(self):
+    def run(self, result_queue):
         print("This is the end, beautiful friend")
