@@ -55,15 +55,6 @@ class BackdoorServer(object):
         """
         raise NotImplementedError
 
-    def send(self, buf):
-        """Sends the contents of buf to the remote connected client.
-        
-        Poaitional arguments:
-        buf - a bytes object to send to the client.
-        """
-        # TODO: Remove this and move result sending logic completely to send_result
-        raise NotImplementedError
-
     def listen(self):
         """Listens for a client and stores its IP address (as a string) in self.client on receiving a connection."""
         raise NotImplementedError
@@ -306,14 +297,6 @@ class BackdoorClient(object):
         Positional arguments:
         payload - A bytes object to send to the server.
         """
-        raise NotImplementedError
-
-    def recv(self):
-        """Receives a packet from the server.
-        
-        Returns a bytes object containing the packet's payload.
-        """
-        # TODO: 
         raise NotImplementedError
 
     def send_command(self, command):
