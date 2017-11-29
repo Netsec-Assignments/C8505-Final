@@ -65,8 +65,6 @@ def make_32_byte_str(instr):
         remainder = instrlen % 8
         start = (eight_byte_chunks - (1 if remainder == 0 else 0)) * 8
 
-        print("len: {}; start: {}".format(instrlen, start))
-
         # cut off the remainder (if there is one) or the last complete 8-byte chunk
         # determine how many chunks we need to add back
         # add the last (possibly padded) 8-byte chunk back to the string to make 32 bytes

@@ -57,13 +57,21 @@ class ShellCommand(Command):
 
         @staticmethod
         def from_bytes(buf):
-            retcode = struct.unpack("<i", buf[1:5])[0]
+            offset = 1
 
-            outlen = struct.unpack("<H", buf[5:7])[0]
-            out = str(buf[7:7+outlen]) if outlen else None
+            retcode = struct.unpack("<i", buf[offset:offset+4])[0]
+            offset += 4
 
-            errlen = struct.unpack("<H", buf[7+outlen:7+outlen+2])[0]
-            err = str(buf[7+outlen:]) if errlen else None
+            outlen = struct.unpack("<H", buf[offset:offset+2])[0]
+            offset += 2
+
+            out = str(buf[offset:offset+outlen]) if outlen else None
+            offset += outlen
+
+            errlen = struct.unpack("<H", buf[offset:offset+2])[0]
+            offset += errlen
+
+            err = str(buf[offset:]) if errlen else None
 
             return ShellCommand.Result(retcode, out, err)
 
@@ -98,7 +106,7 @@ class ShellCommand(Command):
         p = subprocess.Popen(self.command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, shell=True)
         out, err = p.communicate()
         result = ShellCommand.Result(p.returncode, out, err)
-        result_queue.push(result)
+        result_queue.put(result)
 
 
 class WatchCommand(Command):
@@ -223,14 +231,14 @@ class WatchCommand(Command):
                     with open(watch_path, 'r') as payload:
                         contents = payload.read()
                         result = WatchCommand.Result(fullpath, contents, None)
-                        result_queue.push(result)
+                        result_queue.put(result)
 
         except Exception, err:
             print("Error while watching {}:".format("file" if self.path_type == WatchCommand.FILE else "directory"))
             print(err)
             print("This error will be transmitted to the client.")
             result = WatchCommand.Result(self.path, None, str(err))
-            result_queue.push(result)
+            result_queue.put(result)
         finally:
             i.remove_watch(self.path)
 

