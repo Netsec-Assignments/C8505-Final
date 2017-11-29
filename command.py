@@ -125,9 +125,9 @@ class WatchCommand(Command):
 
             # Add the full path of the file whose contents or error are stored
             # in this result
-            buf.append(struct.pack("<H", len(self.path))
+            buf.extend(struct.pack("<H", len(self.path)))
             buf.extend(self.path)
-
+    
             buf.extend(struct.pack("<I", len(self.contents) if self.contents else 0))
             if self.contents:
                 buf.extend(self.contents)
@@ -174,7 +174,7 @@ class WatchCommand(Command):
                     WatchCommand.FILE.
         """
 
-        assert(path_type == WatchCommand.DIR || path_type == WatchCommand.FILE)
+        assert(path_type == WatchCommand.DIR or path_type == WatchCommand.FILE)
 
         self.type = Command.WATCH
         self.path = path

