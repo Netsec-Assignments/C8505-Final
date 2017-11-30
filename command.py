@@ -5,6 +5,7 @@ import inotify.constants
 import os
 import struct
 import subprocess
+import threading
 
 class Command:
     SHELL = 0   # Executes a command in a shell, recording its return value, stdout and stderr
@@ -27,6 +28,13 @@ class Command:
                        and should document this.
         """
         raise NotImplementedError
+
+    def stop(self):
+        """Stops the command if it is currently running.
+
+        May do nothing.
+        """
+        pass
 
 class ShellCommand(Command):
 
@@ -187,6 +195,7 @@ class WatchCommand(Command):
         self.type = Command.WATCH
         self.path = path
         self.path_type = path_type
+        self.finish_watch = threading.Event()
 
     def __str__(self):
         return "Command type: WATCH; path to watch: {}; path type: {}".format(self.path, "directory" if self.path_type == WatchCommand.DIR else "file")
@@ -212,23 +221,29 @@ class WatchCommand(Command):
         else:
             watchdir = self.path
 
-        if not os.path.isdir(watchdir):
-            err = "No such directory {}".format(watchdir)
-            return WatchCommand.Result(None, err)
+        if watchdir:
+            if not os.path.isdir(watchdir):
+                err = "No such directory {}".format(watchdir)
+                return WatchCommand.Result(self.path, None, err)
+        else:
+            watchdir = os.getcwd()
 
         try:
-            i = inotify.adapters.Inotify(block_duration_s = -1) # -1 makes epoll block indefinitely
+            i = inotify.adapters.Inotify(block_duration_s=2)
             i.add_watch(watchdir, mask=inotify.constants.IN_CLOSE_WRITE)
             for event in i.event_gen():
+                if self.finish_watch.is_set():
+                    break
+
                 if event:
                     (header, type_names, watch_path, filename) = event
                     if self.path_type == WatchCommand.FILE and filename != watchfile:
                         continue
 
-                    fullpath = os.path.join(watchdir, filename)
+                    fullpath = os.path.join(watch_path, filename)
                     print("{} was modified. New contents will be sent to client.".format(fullpath))
 
-                    with open(watch_path, 'r') as payload:
+                    with open(fullpath, 'r') as payload:
                         contents = payload.read()
                         result = WatchCommand.Result(fullpath, contents, None)
                         result_queue.put(result)
@@ -241,6 +256,10 @@ class WatchCommand(Command):
             result_queue.put(result)
         finally:
             i.remove_watch(self.path)
+
+    def stop(self):
+        self.finish_watch.set()
+            
 
 class EndCommand(Command):
 

