@@ -255,7 +255,7 @@ class BackdoorServer(object):
                         if running_watch_command:
                             print("Watch command is already running. Ignoring additional watch.")
                         else:
-                            running_watch_command = command.WatchCommand.from_bytes(cmd.to_bytes())
+                            running_watch_command = cmd
                             def run_watch(queue):
                                 running_watch_command.run(queue)
 
