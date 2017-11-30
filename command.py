@@ -125,7 +125,7 @@ class WatchCommand(Command):
         def __init__(self, path, contents, err):
             self.type = Command.WATCH
             self.path = path
-            self.contents = contents if contents else ""
+            self.contents = contents
             self.err = err
 
         def __str__(self):
@@ -134,6 +134,7 @@ class WatchCommand(Command):
                 result += "Error: {}".format(self.err)
             else:
                 result += "Contents: {}".format(self.contents)
+            return result
 
         def to_bytes(self):
             buf = bytearray()
@@ -169,7 +170,7 @@ class WatchCommand(Command):
             offset += contentlen
 
             # bytearrays store ints, "bytes" is an alias for str
-            errlenbyte = buf[5+contentlen]
+            errlenbyte = buf[offset]
             if isinstance(errlenbyte, int):
                 errlen = errlenbyte
             else:
@@ -198,7 +199,8 @@ class WatchCommand(Command):
         self.finish_watch = threading.Event()
 
     def __str__(self):
-        return "Command type: WATCH; path to watch: {}; path type: {}".format(self.path, "directory" if self.path_type == WatchCommand.DIR else "file")
+        desc = "Command type: WATCH; path to watch: {}; path type: {}".format(self.path, "directory" if self.path_type == WatchCommand.DIR else "file")
+        return desc
 
     def to_bytes(self):
         buf = bytearray()

