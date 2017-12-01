@@ -1,0 +1,29 @@
+client accepts input for commands
+client also needs to be able to listen for results from server
+* could maintain open connection in another thread that connects immediately instead of each time for sending/receiving results
+
+
+client
+thread 1
+* accept/parse commands, send to server
+
+thread 2
+* listen for port knocks, on receipt of port knocks, open relevant port on firewall, listen for results
+
+server
+create result queue
+listen for connection
+create result sending thread
+create file watch thread, may not actually need it but w/e
+while client is connected
+  parse command
+  if it's a shell command
+    execute synchronously
+    push result object onto result queue
+  if it's a watch command
+    
+
+watch command contains
+* path
+* whether path is a file or directory (path up to directory must exist)
+

