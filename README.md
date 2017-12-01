@@ -11,11 +11,12 @@ First, install the dependencies above using your Python 2 package manager of cho
 To run the backdoor server:
 
 ```
-python main.py server listen port client port [-m process name] [-p password] [-k aes key]
+python main.py server protocol listen port client port [-m process name] [-p password] [-k aes key]
 ```
 
 where
 * ```server``` is the literal string server
+* ```protocol``` is either tcp or udp
 * ```listen port``` is the port on which the server will listen for backdoor client connections (1-65535 inclusive)
 * ```client port``` is the port to which the server will send the client's results (1-65535 inclusive)
 * ```process name``` will replace the backdoor server's process name so that it's harder to find
@@ -25,11 +26,12 @@ where
 To run the backdoor client:
 
 ```
-python main.py client listen port server port -s server host [-p password] [-k aes key]
+python main.py client protocol listen port server port -s server host [-p password] [-k aes key]
 ```
 
 where
 * ```client``` is the literal string client
+* ```protocol``` is either tcp or udp
 * ```listen port``` is the port on which the client will listen for backdoor server command results (1-65535 inclusive)
 * ```server port``` is the port on which the server will listen for client connections (1-65535 inclusive)
 * ```server host``` is the backdoor server's host name or IP (mandatory when the program is used in client mode even though it's technically "optional")
