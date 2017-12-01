@@ -112,7 +112,7 @@ def main():
             client.send_command(cmd)
 
         # Restore original firewall rules
-        p = subprocess.Popen('iptables-restore', stdin=PIPE)
+        p = subprocess.Popen('iptables-restore', stdin=subprocess.PIPE)
         p.communicate(input=iptables_rules)
 
 if __name__ == "__main__":
